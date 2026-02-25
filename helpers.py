@@ -55,5 +55,12 @@ class montecarlosims():
         # prob that VT < V0
         loss_prob = np.mean(terminal < V0)
         print("Loss probability:", loss_prob)
+        V0 = float(initialportfoliovalue)
+        terminal = paths[-1, :]
+        losses = V0 - terminal
+        conf = 0.95  # 95% VaR
+        var = np.quantile(losses, conf)
+        cvar = losses[losses >= var].mean()
 
-
+        print(f"VaR ({int(conf*100)}%): {var:.2f}")
+        print(f"CVaR ({int(conf*100)}%): {cvar:.2f}")
