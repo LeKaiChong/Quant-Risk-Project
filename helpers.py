@@ -3,6 +3,8 @@ from datetime import date
 import matplotlib.pyplot as plt
 import numpy as np 
 import yaml
+import pandas as pd
+import statsmodels.api as sm
 
 class ConfigLoader():
     @staticmethod
@@ -19,7 +21,7 @@ class data_extraction():
         returns = stockData.pct_change()
         meanReturns = returns.mean()
         covMatrix = returns.cov()
-        return meanReturns, covMatrix
+        return returns,meanReturns, covMatrix
     
 class montecarlosims():
     
@@ -64,3 +66,50 @@ class montecarlosims():
 
         print(f"VaR ({int(conf*100)}%): {var:.2f}")
         print(f"CVaR ({int(conf*100)}%): {cvar:.2f}")
+
+
+class factor_models():
+
+    @ staticmethod
+
+    def factor_modelling(stockdata: pd.DataFrame, factor_Data: pd.DataFrame):
+        results = {}
+
+        # Ensure we have a constant in X (alpha)
+        # We'll build X once per ticker after dropping RF
+        for ticker in stockdata.columns:
+            # y = excess return
+            y = (stockdata[ticker] - factor_Data["RF"]).rename("y")
+
+            # Merge and drop missing rows
+            df = pd.concat([y, factor_Data], axis=1).dropna()
+
+            y_clean = df["y"]
+
+            # X = factors (exclude RF), add constant
+            X_clean = df.drop(columns=["RF", "y"])
+            X_clean = sm.add_constant(X_clean)
+
+            model = sm.OLS(y_clean, X_clean).fit()
+            results[ticker] = model
+
+            print(f"\n===== {ticker} =====")
+            print(model.summary())
+
+        # Compile beta table
+        rows = []
+        for ticker, model in results.items():
+            rows.append({
+                "Ticker": ticker,
+                "Alpha": model.params.get("const"),
+                "Beta_Mkt": model.params.get("SPY-RF"),
+                "Beta_Tech": model.params.get("Tech"),
+                "Beta_HML": model.params.get("HML"),
+                "Beta_SMB": model.params.get("SMB"),
+                "R2": model.rsquared,
+                "N": int(model.nobs)
+            })
+
+        betas_df = pd.DataFrame(rows).set_index("Ticker")
+        return betas_df,results
+        
