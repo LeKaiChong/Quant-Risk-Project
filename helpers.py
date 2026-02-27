@@ -5,6 +5,8 @@ import numpy as np
 import yaml
 import pandas as pd
 import statsmodels.api as sm
+import seaborn as sns
+from sklearn.decomposition import PCA
 
 class ConfigLoader():
     @staticmethod
@@ -72,9 +74,9 @@ class factor_models():
 
     @ staticmethod
 
-    def factor_modelling(stockdata: pd.DataFrame, factor_Data: pd.DataFrame):
+    def preliminaryfactor_modelling(stockdata: pd.DataFrame, factor_Data: pd.DataFrame):
         results = {}
-
+        residuals = pd.DataFrame(index=stockdata.index)
         # Ensure we have a constant in X (alpha)
         # We'll build X once per ticker after dropping RF
         for ticker in stockdata.columns:
@@ -92,7 +94,7 @@ class factor_models():
 
             model = sm.OLS(y_clean, X_clean).fit()
             results[ticker] = model
-
+            residuals[ticker] = model.resid.reindex(stockdata.index)
             print(f"\n===== {ticker} =====")
             print(model.summary())
 
@@ -111,5 +113,76 @@ class factor_models():
             })
 
         betas_df = pd.DataFrame(rows).set_index("Ticker")
-        return betas_df,results
+        return betas_df,results,residuals
+    
+
+    @ staticmethod
+
+    def refinefactor_modelling(stockdata: pd.DataFrame, factor_Data: pd.DataFrame):
+        results = {}
+        residuals = pd.DataFrame(index=stockdata.index)
+        # Ensure we have a constant in X (alpha)
+        # We'll build X once per ticker after dropping RF
+        for ticker in stockdata.columns:
+            # y = excess return
+            y = (stockdata[ticker] - factor_Data["RF"]).rename("y")
+
+            # Merge and drop missing rows
+            df = pd.concat([y, factor_Data], axis=1).dropna()
+
+            y_clean = df["y"]
+
+            # X = factors (exclude RF), add constant
+            X_clean = df.drop(columns=["RF", "y"])
+            X_clean = sm.add_constant(X_clean)
+
+            model = sm.OLS(y_clean, X_clean).fit()
+            results[ticker] = model
+            residuals[ticker] = model.resid.reindex(stockdata.index)
+            print(f"\n===== {ticker} =====")
+            print(model.summary())
+
+        # Compile beta table
+        rows = []
+        for ticker, model in results.items():
+            rows.append({
+                "Ticker": ticker,
+                "Alpha": model.params.get("const"),
+                "Beta_Mkt": model.params.get("SPY-RF"),
+                "Beta_Tech": model.params.get("Tech"),
+                "Beta_HML": model.params.get("HML"),
+                "Beta_SMB": model.params.get("SMB"),
+                "Beta_defence":model.params.get("Defence_impact"),
+                "Beta_speculation": model.params.get('Speculation_impact'),
+                "Beta_Momentum": model.params.get("Momentum_impact"),
+                "R2": model.rsquared,
+                "N": int(model.nobs)
+            })
+
+        betas_df = pd.DataFrame(rows).set_index("Ticker")
+        return betas_df,results,residuals
+    
+    def pca_residuals(residual_matrix):
+        resid_clean = residual_matrix.dropna()
+        pca = PCA()
+        pca.fit(resid_clean)
+
+        explained = pca.explained_variance_ratio_
+
+        print("Explained variance ratios:")
+        print(explained[:5])
         
+        print('printing the components of pc1')
+        print(pd.Series(pca.components_[0], index=resid_clean.columns).sort_values(ascending=False))
+
+
+        print('printing the components of pc2')
+        print(pd.Series(pca.components_[1], index=resid_clean.columns).sort_values(ascending=False))
+        
+    def visualise_residuals(residual_matrix:np.ndarray):
+        resid_corr = residual_matrix.corr()
+        
+        plt.figure(figsize=(12,6))
+        sns.heatmap(resid_corr, annot=True, cmap="coolwarm", center=0,)
+        plt.title("Residual Correlation Matrix")
+        plt.show()
