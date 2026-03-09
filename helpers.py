@@ -186,3 +186,98 @@ class factor_models():
         sns.heatmap(resid_corr, annot=True, cmap="coolwarm", center=0,)
         plt.title("Residual Correlation Matrix")
         plt.show()
+
+    @staticmethod
+    def factor_model_monte_carlo(betas_df,
+        factor_df,
+        residual_df,
+        weights,
+        initial_value=10000,
+        timeframe=100,
+        n_sims=5000,
+        rf_daily=0.0,
+        seed=42):
+        rng = np.random.default_rng(seed)
+
+        # alpha vector
+        alpha = betas_df["Alpha"].copy()
+
+        # beta matrix
+        B = betas_df[
+            [
+                "Beta_Mkt",
+                "Beta_Tech",
+                "Beta_HML",
+                "Beta_SMB",
+                "Beta_defence",
+                "Beta_speculation",
+                "Beta_Momentum",
+            ]
+        ].copy()
+
+        B.columns = [
+            "SPY-RF",
+            "Tech",
+            "HML",
+            "SMB",
+            "Defence_impact",
+            "Speculation_impact",
+            "Momentum_impact",
+        ]
+
+        # align order
+        tickers = list(B.index)
+        weights = np.asarray(weights, dtype=float)
+        weights = weights / weights.sum()
+
+        # factor moments
+        factor_df = factor_df[B.columns].copy()
+        mu_f = factor_df.mean().values # compute the average return of each factor
+        sigma_f = factor_df.cov().values # get the covariance matrix of the factors
+        L_f = np.linalg.cholesky(sigma_f + 1e-12 * np.eye(len(mu_f))) # adds a tiny number in the digaonal
+
+        # residual covariance
+        residual_df = residual_df[tickers].copy()
+        sigma_eps = residual_df.cov().values
+        L_eps = np.linalg.cholesky(sigma_eps + 1e-12 * np.eye(len(tickers)))
+
+        paths = np.zeros((timeframe, n_sims))
+        terminal = np.zeros(n_sims)
+
+        for m in range(n_sims):
+            # simulate factor returns
+            Z_f = rng.standard_normal(size=(timeframe, len(mu_f)))
+            F_sim = Z_f @ L_f.T + mu_f
+
+            # simulate residual shocks
+            Z_eps = rng.standard_normal(size=(timeframe, len(tickers)))
+            eps_sim = Z_eps @ L_eps.T # adds the factor covariance effect into the random simulation
+
+            # rebuild stock excess returns
+            stock_excess = F_sim @ B.values.T + alpha.values + eps_sim
+
+            # add risk-free rate
+            stock_total = stock_excess + rf_daily
+
+            # portfolio returns
+            port_ret = stock_total @ weights
+
+            # portfolio path
+            V = initial_value * np.cumprod(1 + port_ret)
+            paths[:, m] = V
+            terminal[m] = V[-1]
+
+        losses = initial_value - terminal
+        var95 = np.quantile(losses, 0.95)
+        cvar95 = losses[losses >= var95].mean()
+        loss_prob = np.mean(terminal < initial_value)
+
+        return {
+            "paths": paths,
+            "terminal": terminal,
+            "expected_terminal": terminal.mean(),
+            "median_terminal": np.median(terminal),
+            "loss_probability": loss_prob,
+            "VaR_95": var95,
+            "CVaR_95": cvar95,
+        }
