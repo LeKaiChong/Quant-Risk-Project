@@ -281,3 +281,44 @@ class factor_models():
             "VaR_95": var95,
             "CVaR_95": cvar95,
         }
+    @staticmethod
+    def stress_testing(summary_df: pd.DataFrame, shock):
+
+        # Extract alpha
+        alpha = summary_df.loc["Portfolio", "Alpha"]
+
+        # Extract beta estimates
+        betas = summary_df.loc["Portfolio", [
+            "Beta_Mkt",
+            "Beta_Tech",
+            "Beta_HML",
+            "Beta_SMB",
+            "Beta_defence",
+            "Beta_speculation",
+            "Beta_Momentum"
+        ]].copy()
+
+        # Rename to factor names
+        betas.index = [
+            "SPY-RF",
+            "Tech",
+            "HML",
+            "SMB",
+            "Defence_impact",
+            "Speculation_impact",
+            "Momentum_impact"
+        ]
+
+        shock = pd.Series(shock, dtype=float)
+
+        common = betas.index.intersection(shock.index)
+        contribution = betas.loc[common] * shock.loc[common]
+
+        details = pd.DataFrame({
+            "beta": betas.loc[common],
+            "shock": shock.loc[common],
+            "contribution": contribution
+        })
+
+        portfolio_return = alpha + contribution.sum()
+        return portfolio_return, details.sort_values("contribution")
